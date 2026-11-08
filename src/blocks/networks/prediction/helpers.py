@@ -179,7 +179,9 @@ def _resolve_ligand(
     2. ``specified_smiles[res_name]`` → ``("smiles", smiles)``
     3. CCD-name auto-detection (``is_ccd_name`` and not ``disable_ccd_detection``)
        → ``("ccd", res_name)``
-    4. RDKit geometry → SMILES, falling back to CCD-code → SMILES.
+    4. RDKit from the residue's bonds → SMILES, falling back to CCD-code → SMILES.
+       A residue of several heavy atoms without bonds raises: its SMILES would
+       be a set of disconnected atoms.
 
     Oracles that cannot emit a raw CCD code (e.g. Chai-1/ESMFold2 FASTA, which
     are SMILES-only) should pass the result through :func:`_ccd_to_smiles` /
@@ -194,6 +196,13 @@ def _resolve_ligand(
         return "smiles", specified_smiles[res_name]
     if is_ccd_name(res_name) and not disable_ccd_detection:
         return "ccd", res_name
+
+    heavy = atoms[atoms.element != "H"]
+    if len(heavy) > 1 and (heavy.bonds is None or heavy.bonds.get_bond_count() == 0):
+        raise ValueError(
+            f"Ligand {res_name!r} has {len(heavy)} heavy atoms and no bonds, so its "
+            "SMILES would be disconnected atoms; give it in specified_smiles."
+        )
 
     import rdkit.Chem as Chem
     from atomworks.io.tools.rdkit import atom_array_to_rdkit, ccd_code_to_rdkit
