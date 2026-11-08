@@ -163,6 +163,23 @@ def _iter_ligand_residues(atom_array, remove_ligands=False):
         yield res_name, atom_array[start:end], atom_array.chain_id[start]
 
 
+def _atoms_missing_from_ccd(code, atoms):
+    """Names of heavy atoms whose name and element the CCD component lacks."""
+    from biotite.structure.info.ccd import get_from_ccd
+
+    table = get_from_ccd("chem_comp_atom", code)
+    if table is None:  # only in a site mirror newer than the bundled CCD
+        return []
+    elements = np.char.upper(table["type_symbol"].as_array(str))
+    known = set(zip(table["atom_id"].as_array(str), elements))
+    known |= set(zip(table["alt_atom_id"].as_array(str), elements))
+    return [
+        str(name)
+        for name, element in zip(atoms.atom_name, np.char.upper(atoms.element))
+        if element not in ("H", "D") and (str(name), str(element)) not in known
+    ]
+
+
 def _resolve_ligand(
     res_name,
     atoms,
@@ -178,7 +195,9 @@ def _resolve_ligand(
     1. ``specified_ccd[res_name]`` → ``("ccd", code)``
     2. ``specified_smiles[res_name]`` → ``("smiles", smiles)``
     3. CCD-name auto-detection (``is_ccd_name`` and not ``disable_ccd_detection``)
-       → ``("ccd", res_name)``
+       → ``("ccd", res_name)``; a residue with heavy atoms the component lacks
+       (by name or alternative name, and element) raises instead. Missing atoms
+       are allowed: an experimental structure may not resolve them.
     4. RDKit geometry → SMILES, falling back to CCD-code → SMILES.
 
     Oracles that cannot emit a raw CCD code (e.g. Chai-1/ESMFold2 FASTA, which
@@ -193,6 +212,13 @@ def _resolve_ligand(
     if res_name in specified_smiles:
         return "smiles", specified_smiles[res_name]
     if is_ccd_name(res_name) and not disable_ccd_detection:
+        foreign = _atoms_missing_from_ccd(res_name, atoms)
+        if foreign:
+            raise ValueError(
+                f"Ligand {res_name!r} is named like a CCD component but has atoms it "
+                f"lacks ({', '.join(foreign[:5])}); declare it in specified_smiles or "
+                "specified_ccd, or set disable_ccd_detection."
+            )
         return "ccd", res_name
 
     import rdkit.Chem as Chem
